@@ -84,6 +84,12 @@ body {
   animation: blink 1.4s infinite;
 }
 
+.error {
+  margin-top: 8px;
+  color: #f97373;
+  font-size: 0.85rem;
+}
+
 /* ---------- Input Area ---------- */
 
 .input-area {

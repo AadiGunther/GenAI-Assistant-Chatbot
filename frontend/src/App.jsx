@@ -8,26 +8,21 @@ export default function App() {
   const [loading, setLoading] = useState(false)
 
   const controllerRef = useRef(null)
+  const retryRef = useRef(0)
+  const lastUserPromptRef = useRef("")
 
-  const sendMessage = async () => {
-    if (!input.trim()) return
+  const MAX_RETRIES = 3
 
-    const userText = input
+  const backoff = (attempt) => {
+    return Math.min(1000 * 2 ** attempt, 8000)
+  }
 
-    // 1️⃣ Add user message to UI
-    setMessages(prev => [
-      ...prev,
-      { role: "user", content: userText }
-    ])
-
-    setInput("")
-    setLoading(true)
-
+  const streamResponse = async (prompt) => {
+    retryRef.current = 0
     controllerRef.current = new AbortController()
 
-    // 2️⃣ Start streaming response
     await fetchEventSource(
-      `http://localhost:8000/chat?prompt=${encodeURIComponent(userText)}`,
+      `http://localhost:8000/chat?prompt=${encodeURIComponent(prompt)}`,
       {
         signal: controllerRef.current.signal,
 
@@ -35,7 +30,7 @@ export default function App() {
           setMessages(prev => {
             const last = prev[prev.length - 1]
 
-            // Append to existing assistant message
+            // Append tokens to assistant message
             if (last?.role === "assistant") {
               return [
                 ...prev.slice(0, -1),
@@ -56,11 +51,49 @@ export default function App() {
         },
 
         onerror(err) {
+          if (retryRef.current < MAX_RETRIES) {
+            retryRef.current += 1
+            return new Promise(resolve =>
+              setTimeout(resolve, backoff(retryRef.current))
+            )
+          }
+
           setLoading(false)
           throw err
         }
       }
     )
+  }
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return
+
+    const userText = input
+    lastUserPromptRef.current = userText
+
+    // Add user message to UI
+    setMessages(prev => [
+      ...prev,
+      { role: "user", content: userText }
+    ])
+
+    setInput("")
+    setLoading(true)
+
+    await streamResponse(userText)
+  }
+
+  const regenerateResponse = async () => {
+    if (!lastUserPromptRef.current || loading) return
+
+    // Remove last assistant message
+    setMessages(prev => {
+      if (prev.length === 0) return prev
+      return prev.filter((_, i) => i !== prev.length - 1)
+    })
+
+    setLoading(true)
+    await streamResponse(lastUserPromptRef.current)
   }
 
   const stopGeneration = () => {
@@ -107,7 +140,18 @@ export default function App() {
           Send
         </button>
 
-        <button onClick={stopGeneration} disabled={!loading} className="stop">
+        <button
+          onClick={regenerateResponse}
+          disabled={loading || !lastUserPromptRef.current}
+        >
+          Regenerate
+        </button>
+
+        <button
+          onClick={stopGeneration}
+          disabled={!loading}
+          className="stop"
+        >
           Stop
         </button>
       </div>
